@@ -1,0 +1,271 @@
+好，那我就把 **「Canvas + 键盘输入（含 IME）」**
+**一次性给你讲清楚，而且是“能落地、不绕坑”的版本。**
+
+下面内容分三层：
+**心智模型 → Slint 能给你的 → 你该怎么接进现有架构**
+
+---
+
+# 一、先给结论（很重要）
+
+> **用 Canvas 并不会让输入更难**
+> 真正难的是：
+> **“谁来决定文本何时进入 Buffer”**
+
+你的架构里已经有正确答案：
+
+```
+Slint 负责：事件分发
+Canvas 负责：显示
+InputManager 负责：输入语义
+Transaction 负责：落盘
+```
+
+Canvas **不参与输入逻辑**，只是“显示层”。
+
+---
+
+# 二、Slint 给你的「真实输入能力」
+
+Slint 的输入分为 **三类事件**（这是关键）：
+
+### 1️⃣ Key Event（物理按键）
+
+```rust
+KeyPressed / KeyReleased
+```
+
+* Backspace
+* Enter
+* Arrow keys
+* Ctrl / Shift / Alt
+* 快捷键组合
+
+👉 **用于：**
+
+* 光标移动
+* 删除
+* 命令触发
+
+---
+
+### 2️⃣ TextInput（文本输入）
+
+```rust
+on_text_input(text)
+```
+
+* **已经是“用户确认的字符”**
+* 包含 IME 输入结果
+* 不关心键盘布局
+
+👉 **用于：**
+
+* 插入文本
+* IME commit 后文本
+
+⚠️ **你只在这里修改 Buffer**
+
+---
+
+### 3️⃣ IME Preedit（可选 / 未来）
+
+Slint 目前对 preedit（候选态）支持有限
+👉 **但可以先不做**
+
+**VS Code 也是分阶段做的**
+
+---
+
+# 三、正确的输入心智模型（这是你之前担心的点）
+
+### ❌ 错误模型（TextEdit 的陷阱）
+
+```
+Key → UI 控件 → 文本变化 → 通知你
+```
+
+你完全失控。
+
+---
+
+### ✅ 正确模型（Canvas + Editor）
+
+```
+Key / TextInput
+   ↓
+InputManager
+   ↓
+EditIntent
+   ↓
+TransactionBuilder
+   ↓
+PieceTable
+```
+
+**输入是“语义”，不是“字符流”**
+
+---
+
+# 四、最小可行输入实现（你现在就能写）
+
+## 1️⃣ Slint 侧：转发事件（不做逻辑）
+
+```slint
+Canvas {
+    focus: true;
+
+    on_key_pressed(event) => {
+        root.key_pressed(event);
+    }
+
+    on_text_input(text) => {
+        root.text_input(text);
+    }
+}
+```
+
+---
+
+## 2️⃣ Rust 侧：InputManager 接口
+
+```rust
+enum InputEvent {
+    Key(KeyEvent),
+    Text(String),
+}
+```
+
+---
+
+## 3️⃣ Key 事件处理（不改文本）
+
+```rust
+fn handle_key(&mut self, key: KeyEvent) {
+    match key {
+        Key::Left => self.move_cursor_left(),
+        Key::Right => self.move_cursor_right(),
+        Key::Backspace => self.delete_backward(),
+        Key::Enter => self.insert_newline(),
+        _ => {}
+    }
+}
+```
+
+👉 **Key = 编辑命令**
+
+---
+
+## 4️⃣ TextInput 处理（唯一写 Buffer 的地方）
+
+```rust
+fn handle_text(&mut self, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+
+    self.transaction.begin_if_needed();
+
+    self.transaction.insert_text(
+        self.cursor.position(),
+        text,
+    );
+
+    self.transaction.commit();
+}
+```
+
+👉 **IME commit / 普通输入统一走这里**
+
+---
+
+# 五、IME 到底复杂在哪里？（给你吃定心丸）
+
+### 你现在 **不需要** 处理的部分
+
+❌ 候选框渲染
+❌ Preedit underline
+❌ Composition 光标
+
+因为：
+
+* Slint / OS 已经处理 **输入法 UI**
+* `on_text_input()` 只在 **用户确认后** 触发
+
+👉 **这和 VS Code / Sublime 的第一版是一样的**
+
+---
+
+### 你将来要做的（但不是现在）
+
+* 显示 preedit underline
+* composition range
+* 候选文本预览
+
+这些只需要：
+
+```
+IME state → overlay draw
+```
+
+**不影响 PieceTable / Transaction**
+
+---
+
+# 六、和你之前“boundary / transaction 合并”的关系
+
+你之前说得完全对：
+
+> BoundaryDetector 只能判断，不触发 reset
+
+在输入层，正确顺序是：
+
+```
+TextInput arrives
+→ 判断是否新事务
+→ InputManager 决定是否 commit / reset
+→ TransactionBuilder 执行
+```
+
+Canvas **永远不调用 reset**
+
+---
+
+# 七、为什么 Canvas + 输入反而「更简单」
+
+因为你避免了：
+
+* TextEdit 的内部事务
+* 不可控的自动合并
+* 光标与文本不同步
+* IME 黑盒
+
+你只需要记住一句话：
+
+> **只有 TextInput 能写 Buffer**
+> **Key 只能改变状态**
+
+---
+
+# 八、你现在的项目能做到什么程度（现实评估）
+
+用 Canvas + Slint，你可以 **100% 实现你最初的目标**：
+
+* ✅ 大文件（mmap）
+* ✅ 精确 Viewport
+* ✅ 自定义事务
+* ✅ IDE 风格输入
+* ❌ 富文本（你没要）
+* ❌ 多光标（你没要）
+
+---
+
+# 九、下一步（非常具体）
+
+我可以继续直接帮你写：
+
+1️⃣ **光标 + 选择区 Canvas 渲染**
+2️⃣ **InputManager → Transaction 的完整状态机**
+3️⃣ **IME preedit 的最小占位实现（不画 UI）**
+
+你选一个数字，我继续，不再兜圈子。

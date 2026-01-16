@@ -1,0 +1,62 @@
+[package]
+name = "zedit"
+version = "0.1.0"
+edition = "2021"
+authors = ["zedit team"]
+description = "A lightweight, modern text editor with large file support"
+license = "MIT"
+repository = "https://github.com/yourusername/zedit"
+readme = "README.md"
+rust-version = "1.75"
+
+[dependencies]
+# UI 框架 - 渲染和事件捕获层
+slint = { version = "1.8", default-features = false, features = ["backend-winit", "renderer-femtovg", "std", "compat-1-2"] }
+
+# 文本处理 - 字体和字形布局
+cosmic-text = "0.12"
+fontdb = "0.22"
+
+# 编码检测和转换
+encoding_rs = "0.8"
+chardetng = "0.1"
+
+# 内存映射
+memmap2 = "0.9"
+
+# 错误处理
+thiserror = "1.0"
+anyhow = "1.0"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 异步运行时
+tokio = { version = "1.35", features = ["rt-multi-thread", "sync", "fs", "io-util"] }
+
+# 序列化（配置文件）
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# 正则表达式（语法高亮）
+regex = "1.10"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.4"
+
+[[bin]]
+name = "zedit"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = 3
